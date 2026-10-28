@@ -4,7 +4,7 @@ import aiohttp
 from aiohttp import web
 
 TOPO=os.environ.get('TOPO','deep')
-NAMES=['A','B','C','D','E','F'] if TOPO=='deep' else ['A','B1','B2','B3','B4','H']
+NAMES=['A','B','C','D','E','F', 'G', 'H'] if TOPO=='deep' else ['A','B1','B2','B3','B4','H']
 
 async def main():
     timeout=aiohttp.ClientTimeout(total=1.5)

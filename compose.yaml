@@ -49,6 +49,18 @@ services:
       <<: *env
       SERVICE_NAME: F
     profiles: [deep]
+  service-g:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: G
+    profiles: [deep]
+  service-h:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: H
+    profiles: [deep]
   service-b1:
     <<: *svc
     environment:

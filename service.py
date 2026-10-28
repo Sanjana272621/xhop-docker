@@ -8,8 +8,8 @@ import rustworkx as rx
 TOPOS = {
     # a chain with a deep slow service F, three hops below the root, plus a healthy side branch
     "deep": dict(
-        nodes={"A": (8, .005), "B": (8, .010), "C": (8, .010), "D": (8, .010), "E": (8, .010), "F": (2, .040)},
-        edges=[("A", "B", .6), ("A", "C", .4), ("B", "D", 1.), ("D", "F", 1.), ("C", "E", 1.)],
+        nodes={"A": (8, .005), "B": (8, .010), "C": (8, .005), "D": (8, .010), "E": (8, .010), "F": (2, .040), "G": (2, .040), "H": (8, .010)},
+        edges=[("A", "B", 1.), ("B", "C", 1.), ("C", "D", .6), ("D", "E", 1.), ("E", "F", 1.), ("C", "G", .4), ("G", "H", 1.)],
         root="A", base=20, spike=120),
     # wide fan-in: four front services all call one slow shared service H
     "hub": dict(
