@@ -1,0 +1,97 @@
+name: xhop
+x-service: &svc
+  build: .
+  restart: "no"
+  networks: [mesh]
+  environment: &env
+    TOPO: ${TOPO:-deep}
+    MODE: ${MODE:-variable}
+    SEED: ${SEED:-0}
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+    interval: 2s
+    timeout: 2s
+    retries: 20
+services:
+  service-a:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: A
+    profiles: [deep, hub]
+  service-b:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: B
+    profiles: [deep]
+  service-c:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: C
+    profiles: [deep]
+  service-d:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: D
+    profiles: [deep]
+  service-e:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: E
+    profiles: [deep]
+  service-f:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: F
+    profiles: [deep]
+  service-b1:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: B1
+    profiles: [hub]
+  service-b2:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: B2
+    profiles: [hub]
+  service-b3:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: B3
+    profiles: [hub]
+  service-b4:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: B4
+    profiles: [hub]
+  service-h:
+    <<: *svc
+    environment:
+      <<: *env
+      SERVICE_NAME: H
+    profiles: [hub]
+  loadgen:
+    build: .
+    command: ["python", "loadgen.py"]
+    profiles: [load]
+    networks: [mesh]
+    environment:
+      TOPO: ${TOPO:-deep}
+      T: ${T:-45}
+      SEED: ${SEED:-0}
+      SLO: ${SLO:-0.5}
+      OUT: /results
+    volumes:
+      - ./results:/results
+networks:
+  mesh:
+    driver: bridge
