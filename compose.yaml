@@ -79,10 +79,18 @@ services:
       <<: *env
       SERVICE_NAME: H
     profiles: [hub]
+  dashboard:
+    build: .
+    command: ["python", "dashboard.py"]
+    ports: ["8088:8080"]
+    networks: [mesh]
+    environment:
+      TOPO: ${TOPO:-deep}
+    profiles: [live]
   loadgen:
     build: .
     command: ["python", "loadgen.py"]
-    profiles: [load]
+    profiles: [load, live]
     networks: [mesh]
     environment:
       TOPO: ${TOPO:-deep}
@@ -90,6 +98,9 @@ services:
       SEED: ${SEED:-0}
       SLO: ${SLO:-0.5}
       OUT: /results
+      BASE_RPS: ${BASE_RPS:-20}
+      SPIKE_RPS: ${SPIKE_RPS:-120}
+      PHASE_SECONDS: ${PHASE_SECONDS:-15}
     volumes:
       - ./results:/results
 networks:

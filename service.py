@@ -101,6 +101,8 @@ class Service:
         self.waiting = self.in_use = self.inflight = 0
         self.waits = []                                        # queueing delays in this window
         self.arrivals = self.completions = 0                   # counters of this window
+        self.arrival_rate = self.completion_rate = 0.0
+        self.last_wait_ms = 0.0
         self.mu = self.busy = None                             # smoothed discharge rate / utilisation
         self.sigs = {}        # (via_child, origin) -> (p, reach, x, path, time_received)
         # statistics for the report
@@ -202,6 +204,7 @@ class Service:
             now = time.monotonic(); dt = now - last; last = now
             lam, done = self.arrivals / dt, self.completions / dt   # request rate, discharge rate
             self.arrivals = self.completions = 0
+            self.arrival_rate, self.completion_rate = lam, done
             self.mu = done if self.mu is None else 0.7 * self.mu + 0.3 * done
             util = self.in_use / self.workers
             self.busy = util if self.busy is None else 0.7 * self.busy + 0.3 * util
@@ -209,6 +212,7 @@ class Service:
             # (a) local admission control: AIMD on queueing delay
             w = statistics.fmean(self.waits) if self.waits else 0.0
             self.waits.clear()
+            self.last_wait_ms = w * 1000
             self.p = max(0.05, self.p * 0.85) if w > TARGET_WAIT else min(1.0, self.p + 0.03)
 
             # (b) the four live pressures, each in [0,1]
@@ -234,7 +238,14 @@ class Service:
     async def stats(self, request):
         return web.json_response(dict(self.s, cpu_s=time.process_time(), name=self.name,
             p=self.p, x=self.x, need=self.need, waiting=self.waiting,
-            in_use=self.in_use, inflight=self.inflight, mode=self.mode))
+            in_use=self.in_use, inflight=self.inflight, mode=self.mode,
+            workers=self.workers, mean_processing_ms=self.mean_s * 1000,
+            theoretical_capacity_rps=self.workers / self.mean_s,
+            arrival_rate_rps=self.arrival_rate, completion_rate_rps=self.completion_rate,
+            processing_rate_rps=self.workers / self.mean_s,
+            queue_wait_ms=self.last_wait_ms, overloaded=self.x > 0,
+            signals_seen=[dict(origin=origin,via=via,hops=x,path=path)
+                          for (via,origin),(p,reach,x,path,t) in self.fresh().items()]))
 
 
 

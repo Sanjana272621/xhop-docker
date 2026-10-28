@@ -1,43 +1,80 @@
-# X-hop overload signaling — Docker Compose testbed
+# Live adaptive X-hop Docker testbed
 
-A containerized port of the supplied `xhop_real_v2.py`: **one aiohttp service per container**, actual Docker-network HTTP calls, exponential `asyncio.sleep(random.expovariate(1 / mean_s))`, independent AIMD controllers, adaptive/fixed x-hop response-header signaling, and an **open-loop Poisson** load generator. Requires WSL2 + Docker Desktop with WSL integration.
+This is a **live demonstration** version of the previous finite experiment. Every service runs in a separate container, requests and downstream calls are real HTTP, and processing durations are sampled from an exponential distribution. The overload controller and variable-depth signal algorithm remain in `service.py`.
 
-## Run (Ubuntu WSL shell)
+## Run on Windows PowerShell (Docker Desktop)
 
-```bash
-unzip xhop-docker.zip -d xhop-docker
-cd xhop-docker
-mkdir -p results
-docker compose --profile deep build
-# Choose topology, mode, duration, seed by editing .env
-# .env defaults: TOPO=deep MODE=variable T=45 SEED=0
-docker compose --profile deep up -d service-a service-b service-c service-d service-e service-f
-# Wait for services to start, then run one experiment:
-docker compose --profile load run --rm loadgen
-# Results appear in ./results/
-docker compose --profile deep down
+Open a terminal in this folder and run:
+
+```powershell
+docker compose --profile deep --profile live up -d --build
 ```
 
-**Repeat for each mode:** edit `MODE` in `.env`, then **recreate all service containers** (`docker compose --profile deep up -d --force-recreate ...`) before rerunning `loadgen`. Do not reuse running services: controllers and counters persist. For `MODE=none`, controller disabled; `local` uses local AIMD only; `fixed:1`, `fixed:2`, `fixed:3` have fixed signaling depth; `variable` uses choose_x().
+Open **http://localhost:8088** in your browser. Allow a few seconds for the services and load generator to start. The load generator runs forever. It cycles through 15 seconds at 20 req/s, 15 seconds at 120 req/s, and 15 seconds at 20 req/s. The browser UI updates every second.
 
-**Hub topology:** set `TOPO=hub` in `.env` and use:
+To inspect logs:
 
-```bash
-docker compose --profile hub up -d service-a service-b1 service-b2 service-b3 service-b4 service-h
-docker compose --profile load run --rm loadgen
-docker compose --profile hub down
-```
-
-**Quick diagnostics** (with deep running):
-
-```bash
-docker compose logs -f service-f
-docker compose exec service-f python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/stats').read().decode())"
+```powershell
+docker compose logs -f loadgen
 docker compose ps
 ```
 
-**Interpretation:** `T=45` yields 15 seconds at 20 req/s, 15 seconds at 120 req/s (hub 100 req/s), then 15 seconds at 20 req/s. These are Poisson *expected* rates, not exact counts. `goodput` and `success` refer to requests *scheduled* during the spike; success requires HTTP 200 and latency <= 0.5 s. `p99_ms` is calculated on successful requests only. `wasted` is a response-header-derived work proxy and undercounts timed-out/cancelled work. `sig_B_per_req` is header string length, not actual on-wire bytes. `mean_x` averages positive x values over controller intervals, not individual requests. `cpu` pressure is worker occupancy, not actual CPU; `mem` pressure uses request-buffer allocation, not container RSS. The code's weights and signaling cost are heuristics, not calibrated physical units.
+To stop everything:
 
-**Important experimental limitations:** Docker networking adds real communication overhead, but all containers still run on one host and share its CPU. `asyncio.sleep` models elapsed service time, not CPU work. The synthetic load generator is open-loop and can lag at high rates; compare `actual_start` with `scheduled` in CSV. The deep topology's independent Bernoulli branches mean A may call both B and C. HTTP response piggybacking means signals only propagate when responses return. Multiple runs/seeds and confidence intervals are needed before claiming improvement. `stats` counters are cumulative; restart containers for each run. The fixed and variable modes can over-shed. The implementation is a research testbed, not a production service mesh.
+```powershell
+docker compose --profile deep --profile live down
+```
 
-**Next research improvements:** add per-controller-tick JSONL telemetry (N, x, p, per-hop benefit/cost), measure signal age at the root, vary branch probabilities/processing times/worker limits, add a Prometheus exporter, and evaluate cost sensitivity and statistical confidence intervals. A later Locust frontend is possible, but Locust's default user model is closed-loop and will not automatically reproduce the exact open-loop 20/120/20 offered arrival process.
+**Important:** Don't run `docker compose --profile load run --rm loadgen` for this version; the load generator is a long-running service and starts with the `live` profile. Do not mix these files with the previous Compose file.
+
+## Dashboard controls
+
+Use **Set constant load** to send an arbitrary fixed rate from 0 to 2000 req/s, or **Resume 20 → 120 → 20 cycle** to return to the automatic repeating workload. A service turns red when its own controller chooses `x > 0` (meaning it is originating an overload warning). `Signals received` lists the warning origins learned via downstream responses. A warning may remain in flight briefly after its origin's status changes.
+
+Each card shows configured theoretical local capacity (`workers / mean_processing_time`), in-flight requests, recent incoming requests/s, actual completed requests/s, configured theoretical processing rate, waiting requests, busy workers, queue delay, admission probability `p`, overload need and chosen hop count `x`.
+
+### Change the per-service capacity
+
+Edit `TOPOS['deep']['nodes']` in `service.py`. Example:
+
+```python
+"F": (2, .040)  # two concurrent worker slots; 40 ms mean local processing
+"F": (1, .050)  # one worker; 50 ms mean -> 20 local completions/s max
+```
+
+Then rebuild/recreate:
+
+```powershell
+docker compose --profile deep --profile live up -d --build --force-recreate
+```
+
+To change the cycle rate or duration, edit `.env` and recreate the loadgen:
+
+```ini
+BASE_RPS=20
+SPIKE_RPS=120
+PHASE_SECONDS=15
+```
+
+The local controller updates every 250 ms; the dashboard polls every second. `arrival_rate_rps` and `completion_rate_rps` are measured over the latest controller interval and may fluctuate substantially. They are not the same as the configured capacity.
+
+## What Docker Desktop shows
+
+Docker Desktop's Containers view displays individual containers, logs and aggregate CPU/memory/network metrics. It does **not** automatically know application-specific HTTP arrival rates, admission probability, x-hop propagation or request counts. Use this dashboard for those values.
+
+## Research caveats
+
+- `asyncio.sleep(random.expovariate(...))` simulates latency, not CPU consumption. Worker slots are held during the sleep and downstream calls.
+- Local capacity is an upper bound for the service's own work, not end-to-end throughput. A parent retains its worker while waiting on a child.
+- Red indicates `x>0`, which in the signaling modes means local AIMD is shedding; it is **not** a direct hardware CPU overload flag. Services that are only receiving a downstream signal are not red.
+- The service pressure formula still uses manually chosen weights. The dashboard makes it observable, not validated.
+- Continuous load is useful for live demos but **not** a controlled benchmark: run separate isolated trials, multiple seeds and measure warmup/cooldown to compare policies scientifically.
+- The previous finite-run CSV summary workflow has been replaced by live counters in this version. This dashboard does not persist time-series data.
+
+## Modes
+
+Set `MODE=variable` (default), `local`, `none`, `fixed:1`, `fixed:2`, or `fixed:3` in `.env` and recreate all services. `none` and `local` do not emit signals and therefore won't turn red under the current red=`x>0` display rule.
+
+## Hub topology
+
+Change `TOPO=hub` in `.env` and run `docker compose --profile hub --profile live up -d --build`. Stop and remove the deep topology first to avoid mixing incompatible containers.

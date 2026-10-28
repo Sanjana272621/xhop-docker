@@ -1,73 +1,90 @@
-"""Open-loop Poisson request generator; one container, no coordinated user pacing."""
-import asyncio, aiohttp, csv, json, math, os, random, statistics, time
-from pathlib import Path
-from service import TOPOS, analyze_topology
+"""Infinite open-loop Poisson arrivals, cyclic load phases, live adjustable rate."""
+import asyncio, json, os, random, time
+import aiohttp
+from aiohttp import web
+from service import TOPOS
+
+TOPO=os.environ.get('TOPO','deep')
+BASE=float(os.environ.get('BASE_RPS',str(TOPOS[TOPO]['base'])))
+SPIKE=float(os.environ.get('SPIKE_RPS',str(TOPOS[TOPO]['spike'])))
+PHASE=float(os.environ.get('PHASE_SECONDS','15'))
+ROOT='http://service-'+TOPOS[TOPO]['root'].lower()+':8000/'
+
+class Generator:
+    def __init__(self):
+        self.started=time.monotonic(); self.override=None; self.sent=0; self.success=0
+        self.errors=0; self.active=0; self.latency_ms=0; self.phase='base'
+        self.rate=BASE; self.tasks=set(); self.window_sent=0; self.window_success=0
+        self.window_start=time.monotonic(); self.actual_rps=0; self.goodput_rps=0
+        self.session=None
+    def snapshot(self):
+        return dict(topo=TOPO,phase=self.phase,target_rps=self.rate,override=self.override,
+                    sent=self.sent,success=self.success,errors=self.errors,inflight=self.active,
+                    observed_rps=self.actual_rps,goodput_rps=self.goodput_rps,
+                    elapsed_seconds=round(time.monotonic()-self.started,1),
+                    phase_seconds=PHASE,base_rps=BASE,spike_rps=SPIKE)
+    async def one(self):
+        self.active+=1
+        try:
+            async with self.session.get(ROOT,timeout=aiohttp.ClientTimeout(total=5)) as r:
+                await r.read()
+                if r.status==200:
+                    self.success+=1; self.window_success+=1
+                else: self.errors+=1
+        except (aiohttp.ClientError,asyncio.TimeoutError): self.errors+=1
+        finally: self.active-=1
+    async def run(self):
+        random.seed(int(os.environ.get('SEED','0')))
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0)) as session:
+            self.session=session
+            for name in TOPOS[TOPO]['nodes']:
+                for _ in range(120):
+                    try:
+                        async with session.get(f'http://service-{name.lower()}:8000/health',timeout=aiohttp.ClientTimeout(total=2)) as r:
+                            if r.status==200: break
+                    except (aiohttp.ClientError,asyncio.TimeoutError): pass
+                    await asyncio.sleep(.5)
+                else: raise RuntimeError(f'Service {name} unavailable')
+            print('Continuous load generator started',flush=True)
+            next_at=time.monotonic()
+            while True:
+                now=time.monotonic()
+                elapsed=now-self.started
+                phase=int(elapsed//PHASE)%3
+                self.phase=['base','spike','recovery'][phase]
+                self.rate=self.override if self.override is not None else (SPIKE if phase==1 else BASE)
+                if now-self.window_start>=1:
+                    dt=now-self.window_start
+                    self.actual_rps=self.window_sent/dt; self.goodput_rps=self.window_success/dt
+                    self.window_sent=0; self.window_success=0; self.window_start=now
+                if self.rate<=0:
+                    await asyncio.sleep(.1); next_at=time.monotonic(); continue
+                next_at=max(next_at,now)+random.expovariate(self.rate)
+                await asyncio.sleep(max(0,next_at-time.monotonic()))
+                self.sent+=1; self.window_sent+=1
+                task=asyncio.create_task(self.one())
+                self.tasks.add(task); task.add_done_callback(self.tasks.discard)
 
 async def main():
-    topo_name=os.environ.get('TOPO','deep')
-    topo=TOPOS[topo_name]
-    T=float(os.environ.get('T','45'))
-    seed=int(os.environ.get('SEED','0'))
-    slo=float(os.environ.get('SLO','0.5'))
-    spike=(T/3, 2*T/3)
-    random.seed(seed)
-    base=topo['base']; high=topo['spike']
-    root=f"http://service-{topo['root'].lower()}:8000/"
-    names=list(topo['nodes'])
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0)) as session:
-        for name in names:
-            url=f'http://service-{name.lower()}:8000/health'
-            for attempt in range(120):
-                try:
-                    async with session.get(url,timeout=aiohttp.ClientTimeout(total=2)) as r:
-                        if r.status==200: break
-                except (aiohttp.ClientError,asyncio.TimeoutError): pass
-                await asyncio.sleep(.5)
-            else: raise RuntimeError(f'Service {name} did not become healthy')
-        print(f'All services ready. topo={topo_name} T={T} seed={seed} rates={base}/{high}/{base}',flush=True)
-        print('Upstream topology:',json.dumps(analyze_topology(topo)),flush=True)
-        rows=[]; tasks=[]; start=time.monotonic()
-        async def one(scheduled):
-            t0=time.monotonic()
-            try:
-                async with session.get(root,timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    await r.read()
-                    lat=time.monotonic()-t0
-                    rows.append(dict(scheduled=scheduled,latency=lat,success=int(r.status==200 and lat<=slo),status=r.status,work=float(r.headers.get('X-Work',0)),drop=r.headers.get('X-Drop',''),sig=r.headers.get('X-Sig',''),actual_start=t0-start))
-            except (aiohttp.ClientError,asyncio.TimeoutError) as exc:
-                rows.append(dict(scheduled=scheduled,latency=time.monotonic()-t0,success=0,status=0,work=0,drop=type(exc).__name__,sig='',actual_start=t0-start))
-        # Generate exponential interarrival times within each phase, resetting at phase boundaries.
-        for phase_start,phase_end,rate in [(0,T/3,base),(T/3,2*T/3,high),(2*T/3,T,base)]:
-            nxt=phase_start
-            while True:
-                nxt+=random.expovariate(rate)
-                if nxt>=phase_end: break
-                await asyncio.sleep(max(0,start+nxt-time.monotonic()))
-                tasks.append(asyncio.create_task(one(nxt)))
-        await asyncio.gather(*tasks)
-        stats={}
-        for name in names:
-            async with session.get(f'http://service-{name.lower()}:8000/stats') as r:
-                stats[name]=await r.json()
-    spike_rows=[r for r in rows if spike[0]<=r['scheduled']<spike[1]]
-    good=[r for r in spike_rows if r['success']]
-    bad=[r for r in spike_rows if not r['success']]
-    lats=sorted(r['latency'] for r in good)
-    xn=sum(s['x_n'] for s in stats.values())
-    metrics=dict(topology=topo_name,mode=stats[topo['root']]['mode'],T=T,seed=seed,
-        offered=len(spike_rows)/(T/3),goodput=len(good)/(T/3),success=len(good)/max(1,len(spike_rows)),
-        p99_ms=lats[max(0,math.ceil(.99*len(lats))-1)]*1000 if lats else None,
-        wasted=sum(r['work'] for r in bad)/max(1e-9,sum(r['work'] for r in spike_rows)),
-        shed_root=sum(r['drop']==topo['root'] for r in bad)/max(1,len(bad)),
-        sig_B_per_req=sum(s['sig_bytes'] for s in stats.values())/max(1,len(rows)),
-        mean_x=sum(s['x_sum'] for s in stats.values())/xn if xn else 0,
-        root_paths=stats[topo['root']]['paths'])
-    folder=Path(os.environ.get('OUT','/results'));folder.mkdir(parents=True,exist_ok=True)
-    stem=f"{topo_name}_{metrics['mode'].replace(':','-')}_seed{seed}"
-    with (folder/f'{stem}_requests.csv').open('w',newline='') as f:
-        w=csv.DictWriter(f,fieldnames=list(rows[0]) if rows else ['scheduled','latency','success','status','work','drop','sig','actual_start']);w.writeheader();w.writerows(rows)
-    (folder/f'{stem}_stats.json').write_text(json.dumps(stats,indent=2))
-    (folder/f'{stem}_metrics.json').write_text(json.dumps(metrics,indent=2))
-    print(json.dumps(metrics,indent=2),flush=True)
+    g=Generator(); app=web.Application()
+    async def state(req): return web.json_response(g.snapshot())
+    async def setrate(req):
+        try:
+            data=await req.json(); rate=data.get('rate')
+            if rate is None: g.override=None
+            else:
+                rate=float(rate)
+                if not 0<=rate<=2000: raise ValueError()
+                g.override=rate
+        except (ValueError,TypeError,KeyError):
+            return web.json_response({'error':'rate must be null or 0..2000'},status=400)
+        return web.json_response(g.snapshot())
+    app.router.add_get('/state',state)
+    app.router.add_post('/rate',setrate)
+    runner=web.AppRunner(app); await runner.setup()
+    await web.TCPSite(runner,'0.0.0.0',8001).start()
+    task=asyncio.create_task(g.run())
+    try: await task
+    finally: await runner.cleanup()
 
 if __name__=='__main__': asyncio.run(main())
