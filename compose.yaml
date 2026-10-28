@@ -85,11 +85,11 @@ services:
       <<: *env
       SERVICE_NAME: B4
     profiles: [hub]
-  service-h:
+  service-k:
     <<: *svc
     environment:
       <<: *env
-      SERVICE_NAME: H
+      SERVICE_NAME: K
     profiles: [hub]
   dashboard:
     build: .
