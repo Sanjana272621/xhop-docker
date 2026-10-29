@@ -8,7 +8,7 @@ import rustworkx as rx
 TOPOS = {
     # a chain with a deep slow service F, three hops below the root, plus a healthy side branch
     "deep": dict(
-        nodes={"A": (8, .005), "B": (8, .005), "C": (8, .005), "D": (8, .010), "E": (8, .010), "F": (2, .040), "G": (2, .040), "H": (8, .010)},
+        nodes={"A": (15, .005), "B": (8, .005), "C": (8, .005), "D": (8, .010), "E": (8, .010), "F": (2, .040), "G": (2, .040), "H": (8, .010)},
         edges=[("A", "B", 1.), ("B", "C", 1.), ("C", "D", .6), ("D", "E", 1.), ("E", "F", 1.), ("C", "G", .4), ("G", "H", 1.)],
         root="A", base=20, spike=120),
     # wide fan-in: four front services all call one slow shared service H
@@ -27,12 +27,12 @@ PERIOD = 1           # control loop period (seconds)
 TARGET_WAIT = 0.02      # local controller target queueing delay (seconds)
 SIG_EXPIRY = 1.0        # a signal not refreshed for this long is forgotten
 REQ_MEM = 256 * 1024    # bytes held per in-flight request (makes memory pressure real)
-MEM_BUDGET = 6 * 1024 * 1024   # "memory limit" per service
+MEM_BUDGET = 3 * 1024   # "memory limit" per service
 # --- depth policy knobs
-W = dict(rate=0.35, drain=0.35, cpu=0.15, mem=0.15)   # weights of the four pressures (sum = 1)
+W = dict(rate=0.25, drain=0.35, cpu=0.25, mem=0.15)   # weights of the four pressures (sum = 1)
 RATE_SAT = 0.5          # arrival/discharge ratio 1.5 counts as full rate-pressure
-DRAIN_REF = SLO / 2     # queue that needs this long to drain counts as full drain-pressure
-MSG_COST = 0.15         # price of notifying ONE service; raise it => shorter signals
+DRAIN_REF = 0.15     # queue that needs this long to drain counts as full drain-pressure
+MSG_COST = 0.25        # price of notifying ONE service; raise it => shorter signals
 X_MIN = 1               # an overloaded service always tells at least its direct callers
 
 
