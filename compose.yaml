@@ -1,4 +1,4 @@
-name: xhop
+name: xhop-docker
 x-service: &svc
   build: .
   restart: "no"

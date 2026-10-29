@@ -22,7 +22,8 @@ TOPOS = {
 # ===================================================================== 2. TUNABLES
 SLO = 0.5               # a request slower than this counts as failed (seconds)
 QMAX = 10               # local safety net: reject if this many requests already wait
-PERIOD = 0.25           # control loop period (seconds)
+#PERIOD = 0.25 
+PERIOD = 1           # control loop period (seconds)
 TARGET_WAIT = 0.02      # local controller target queueing delay (seconds)
 SIG_EXPIRY = 1.0        # a signal not refreshed for this long is forgotten
 REQ_MEM = 256 * 1024    # bytes held per in-flight request (makes memory pressure real)

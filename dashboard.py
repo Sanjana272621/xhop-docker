@@ -3,8 +3,12 @@ import asyncio, os
 import aiohttp
 from aiohttp import web
 
+from service import TOPOS   # single source of truth: the same topology the services run
+
 TOPO=os.environ.get('TOPO','deep')
-NAMES=['A','B','C','D','E','F', 'G', 'H'] if TOPO=='deep' else ['A','B1','B2','B3','B4','H']
+NAMES=list(TOPOS[TOPO]['nodes'])
+EDGES=[[u,v,q] for u,v,q in TOPOS[TOPO]['edges']]
+ROOT=TOPOS[TOPO]['root']
 
 async def main():
     timeout=aiohttp.ClientTimeout(total=1.5)
@@ -20,7 +24,7 @@ async def main():
             try:
                 async with client.get('http://loadgen:8001/state') as r: gen=await r.json()
             except (aiohttp.ClientError,asyncio.TimeoutError): gen={'offline':True}
-            return web.json_response({'topology':TOPO,'services':data,'generator':gen})
+            return web.json_response({'topology':TOPO,'root':ROOT,'edges':EDGES,'services':data,'generator':gen})
         async def rate(request):
             try:
                 body=await request.json()
