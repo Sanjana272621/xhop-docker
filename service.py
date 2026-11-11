@@ -17,23 +17,58 @@ TOPOS = {
         edges=[("A", "B1", .25), ("A", "B2", .25), ("A", "B3", .25), ("A", "B4", .25),
                ("B1", "K", 1.), ("B2", "K", 1.), ("B3", "K", 1.), ("B4", "K", 1.)],
         root="A", base=20, spike=100),
+    # ---- topologies added for experiments (each isolates ONE structural property) ----
+    # pure chain, slow service 5 hops below the root: the best case for multi-hop signalling
+    "chain": dict(
+        nodes={"A": (15, .005), "B": (8, .005), "C": (8, .005), "D": (8, .010), "E": (8, .010), "F": (2, .040)},
+        edges=[("A", "B", 1.), ("B", "C", 1.), ("C", "D", 1.), ("D", "E", 1.), ("E", "F", 1.)],
+        root="A", base=20, spike=100),
+    # slow service directly under the root: depth 1, multi-hop has nothing to add (control case)
+    "shallow": dict(
+        nodes={"A": (15, .005), "B": (2, .040), "C": (8, .005)},
+        edges=[("A", "B", 1.), ("A", "C", .5)],
+        root="A", base=20, spike=100),
+    # the slow service sits behind ONE of four branches, so only 25% of requests ever reach it
+    "fanout": dict(
+        nodes={"A": (15, .005), "B": (8, .005), "C": (8, .005), "D": (8, .005), "E": (8, .005), "F": (2, .040)},
+        edges=[("A", "B", .25), ("A", "C", .25), ("A", "D", .25), ("A", "E", .25), ("E", "F", 1.)],
+        root="A", base=40, spike=240),
+    # two paths converge on the slow service D (it sees 2x the root's rate); signals arrive via both paths
+    "diamond": dict(
+        nodes={"A": (15, .005), "B": (8, .005), "C": (8, .005), "D": (2, .040)},
+        edges=[("A", "B", 1.), ("A", "C", 1.), ("B", "D", 1.), ("C", "D", 1.)],
+        root="A", base=15, spike=50),
+    # 8-service chain, slow service 7 hops below the root: does x stop short when pressure is low?
+    "long": dict(
+        nodes={"A": (15, .005), "B": (8, .005), "C": (8, .005), "D": (8, .005), "E": (8, .005),
+               "F": (8, .005), "G": (8, .005), "H": (2, .040)},
+        edges=[("A", "B", 1.), ("B", "C", 1.), ("C", "D", 1.), ("D", "E", 1.), ("E", "F", 1.), ("F", "G", 1.), ("G", "H", 1.)],
+        root="A", base=20, spike=100),
 }
 
 # ===================================================================== 2. TUNABLES
-SLO = 0.5               # a request slower than this counts as failed (seconds)
-QMAX = 10               # local safety net: reject if this many requests already wait
-#PERIOD = 0.25 
-PERIOD = 1           # control loop period (seconds)
-TARGET_WAIT = 0.02      # local controller target queueing delay (seconds)
-SIG_EXPIRY = 1.0        # a signal not refreshed for this long is forgotten
-REQ_MEM = 256 * 1024    # bytes held per in-flight request (makes memory pressure real)
-MEM_BUDGET = 3 * 1024   # "memory limit" per service
+# Every value below keeps the default it had before; set the matching environment variable (see exp.env /
+# sweep.sh) to override it for one experiment without editing this file.
+def _env(name, default):
+    v = os.environ.get(name)
+    return float(v) if v not in (None, "") else default
+
+SLO = _env("SLO", 0.5)                      # a request slower than this counts as failed (seconds)
+QMAX = int(_env("QMAX", 10))                # local safety net: reject if this many requests already wait
+PERIOD = _env("PERIOD", 1)                  # control loop period (seconds)
+TARGET_WAIT = _env("TARGET_WAIT", 0.02)     # local controller target queueing delay (seconds)
+SIG_EXPIRY = _env("SIG_EXPIRY", 1.0)        # a signal not refreshed for this long is forgotten
+REQ_MEM = 256 * 1024                        # bytes held per in-flight request (makes memory pressure real)
+MEM_BUDGET = _env("MEM_BUDGET", 3 * 1024)   # "memory limit" per service (bytes)
 # --- depth policy knobs
-W = dict(rate=0.25, drain=0.35, cpu=0.25, mem=0.15)   # weights of the four pressures (sum = 1)
-RATE_SAT = 0.5          # arrival/discharge ratio 1.5 counts as full rate-pressure
-DRAIN_REF = 0.15     # queue that needs this long to drain counts as full drain-pressure
-MSG_COST = 0.25        # price of notifying ONE service; raise it => shorter signals
-X_MIN = 1               # an overloaded service always tells at least its direct callers
+W = dict(rate=_env("W_RATE", 0.25), drain=_env("W_DRAIN", 0.35),
+         cpu=_env("W_CPU", 0.25), mem=_env("W_MEM", 0.15))      # weights of the four pressures
+_wsum = sum(W.values())
+W = {k: v / _wsum for k, v in W.items()}                        # always normalised to sum = 1
+RATE_SAT = _env("RATE_SAT", 0.5)            # arrival/discharge ratio 1.5 counts as full rate-pressure
+DRAIN_REF = _env("DRAIN_REF", 0.15)         # queue that needs this long to drain counts as full drain-pressure
+MSG_COST = _env("MSG_COST", 0.25)           # price of notifying ONE service; raise it => shorter signals
+X_MIN = int(_env("X_MIN", 1))               # an overloaded service always tells at least its direct callers
 
 
 def clamp(v, lo=0.0, hi=1.0):

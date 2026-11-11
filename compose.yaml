@@ -3,6 +3,7 @@ x-service: &svc
   build: .
   restart: "no"
   networks: [mesh]
+  env_file: [exp.env]          # experiment overrides (MSG_COST, W_RATE, ...) written by sweep.sh; empty = defaults
   environment: &env
     TOPO: ${TOPO:-deep}
     MODE: ${MODE:-variable}
@@ -18,49 +19,49 @@ services:
     environment:
       <<: *env
       SERVICE_NAME: A
-    profiles: [deep, hub]
+    profiles: [deep, hub, chain, shallow, fanout, diamond, long]
   service-b:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: B
-    profiles: [deep]
+    profiles: [deep, chain, shallow, fanout, diamond, long]
   service-c:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: C
-    profiles: [deep]
+    profiles: [deep, chain, shallow, fanout, diamond, long]
   service-d:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: D
-    profiles: [deep]
+    profiles: [deep, chain, fanout, diamond, long]
   service-e:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: E
-    profiles: [deep]
+    profiles: [deep, chain, fanout, long]
   service-f:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: F
-    profiles: [deep]
+    profiles: [deep, chain, fanout, long]
   service-g:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: G
-    profiles: [deep]
+    profiles: [deep, long]
   service-h:
     <<: *svc
     environment:
       <<: *env
       SERVICE_NAME: H
-    profiles: [deep]
+    profiles: [deep, long]
   service-b1:
     <<: *svc
     environment:
@@ -91,6 +92,19 @@ services:
       <<: *env
       SERVICE_NAME: K
     profiles: [hub]
+  record:                      # one recorded experiment: docker compose --profile exp run --rm record
+    build: .
+    command: ["python", "record.py"]
+    profiles: [exp]
+    networks: [mesh]
+    env_file: [exp.env]
+    environment:
+      TOPO: ${TOPO:-deep}
+      MODE: ${MODE:-variable}
+      SEED: ${SEED:-0}
+      OUT: /results
+    volumes:
+      - ./results:/results
   dashboard:
     build: .
     command: ["python", "dashboard.py"]
